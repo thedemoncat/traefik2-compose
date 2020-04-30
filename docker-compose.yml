@@ -1,0 +1,64 @@
+version: '3.7'
+
+x-default-opts: 
+    &default-opts
+    logging:
+      options:
+        max-size: "1m" 
+
+services:
+
+    traefik:
+        <<: *default-opts
+        container_name: traefik
+        image: traefik:v2.2        
+        command:
+            - "--log.level=${LEVEL_DEBUG}"
+            - "--api.insecure=true"
+            - "--providers.docker=true"
+            - "--entryPoints.web.address=:80"
+            - "--entryPoints.websecure.address=:443"
+            - "--entryPoints.ssh.address=:22"
+            - "--providers.docker=true"
+            - "--providers.docker.watch=true"
+            - "--providers.docker.network=proxy"
+            - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+            - "--providers.docker.exposedbydefault=false"
+            - "--certificatesResolvers.letsencrypt.acme.email=${ROOT_EMAIL}"
+            - "--certificatesResolvers.letsencrypt.acme.storage=acme.json"
+            - "--certificatesResolvers.letsencrypt.acme.tlsChallenge=true"
+            - "--certificatesResolvers.letsencrypt.acme.httpChallenge=true"
+            - "--certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=web"
+            - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+        restart: always
+        ports:
+            - "80:80"
+            - "443:443"
+        networks:
+            proxy:
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - ./acme.json:/acme.json
+            - ./letsencrypt:/letsencrypt
+        labels:
+
+            # Dashboard
+            - "traefik.enable=true" # Enable Traefik, because we disabled expose a service by default
+            - "traefik.http.routers.traefik.rule=${TRAEFIK_HOST_RULE}" # Tell Traefik to create routre 't' and catch all requests with given Host (http header: Host)
+            - "traefik.http.routers.traefik.service=api@internal" # the router 't' will forward request to service api@internal
+            - "traefik.http.routers.traefik.tls.certresolver=letsencrypt" # the router 't' will use TLS certresolver called LE
+            - "traefik.http.routers.traefik.entrypoints=websecure,web" # the router 't' should listen on both entrypoints
+            - "traefik.http.services.traefik.loadbalancer.server.port=8080" # the router 't' will balance incoming requests between servers listens on port 8080
+            - "traefik.http.services.traefik.loadbalancer.passhostheader=true"
+            
+            - "traefik.http.routers.traefik.middlewares=authtraefik" # Tell Traefik, that for router 't' should use following middleware
+            # echo $(htpasswd -nbB admin "dpVyMM7RuPdO") | sed -e s/\\$/\\$\\$/g
+            - "traefik.http.middlewares.authtraefik.basicauth.users=${TRAEFIK_AUTH}" 
+            - "traefik.http.routers.http-catchall.rule=hostregexp(`{host:.+}`)"    # global redirect to https
+            - "traefik.http.routers.http-catchall.entrypoints=web"
+            - "traefik.http.routers.http-catchall.middlewares=redirect-to-https"
+            - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+    
+networks:
+    proxy:
+        external: true
